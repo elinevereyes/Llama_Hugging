@@ -1,6 +1,7 @@
 import streamlit as st
 import replicate
 import os
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # App title
 st.set_page_config(page_title="🦙💬 Llama 2 Chatbot")
@@ -18,16 +19,8 @@ with st.sidebar:
         else:
             st.success('Proceed to entering your prompt message!', icon='👉')
 
-    # Refactored from https://github.com/a16z-infra/llama2-chatbot
     st.subheader('Models and parameters')
     selected_model = st.sidebar.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B', 'Llama2-70B'], key='selected_model')
-    if selected_model == 'Llama2-7B':
-        llm = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea'
-    elif selected_model == 'Llama2-13B':
-        llm = 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
-    else:
-        llm = 'replicate/llama70b-v2-chat:e951f18578850b652510200860fc4ea62b3b16fac280f83ff32282f87bbd2e48'
-    
     temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01)
     top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
     max_length = st.sidebar.slider('max_length', min_value=64, max_value=4096, value=512, step=8)
@@ -36,6 +29,17 @@ with st.sidebar:
     
     st.markdown('📖 Learn how to build this app in this [blog](https://blog.streamlit.io/how-to-build-a-llama-2-chatbot/)!')
 os.environ['REPLICATE_API_TOKEN'] = replicate_api
+
+# Load Llama2 model and tokenizer
+if selected_model == 'Llama2-7B':
+    model_name = 'a16z-infra/llama7b-v2-chat'
+elif selected_model == 'Llama2-13B':
+    model_name = 'a16z-infra/llama13b-v2-chat'
+else:
+    model_name = 'elineve/Llama2-Test'
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
 
 # Store LLM generated responses
 if "messages" not in st.session_state.keys():
@@ -58,10 +62,15 @@ def generate_llama2_response(prompt_input, language='English'):
             string_dialogue += "User: " + dict_message["content"] + "\n\n"
         else:
             string_dialogue += "Assistant: " + dict_message["content"] + "\n\n"
-    output = replicate.run(llm, 
-                           input={"prompt": f"{string_dialogue} {prompt_input} Assistant: ",
-                                  "temperature":temperature, "top_p":top_p, "max_length":max_length, "repetition_penalty":1, "language": language})
-    return output
+    input_text = f"{string_dialogue} {prompt_input} Assistant: "
+    input_ids = tokenizer.encode(input_text, return_tensors='pt')
+    output = model.generate(input_ids, 
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_length=max_length,
+                            pad_token_id=tokenizer.eos_token_id,
+                            repetition_penalty=1)
+    return tokenizer.decode(output[0], skip_special_tokens=True)
 
 # User-provided prompt
 if prompt := st.chat_input(disabled=not replicate_api):
@@ -73,12 +82,6 @@ if prompt := st.chat_input(disabled=not replicate_api):
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = generate_llama2_response(prompt, language='Spanish')
-            placeholder = st.empty()
-            full_response = ''
-            for item in response:
-                full_response += item
-                placeholder.markdown(full_response)
-            placeholder.markdown(full_response)
-    message = {"role": "assistant", "content": full_response}
-    st.session_state.messages.append(message)
+            response = generate_llama2_response(prompt, language=language)
+            st.write(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
